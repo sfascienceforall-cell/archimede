@@ -1,0 +1,164 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#fff;font-family:system-ui,-apple-system,sans-serif;}
+canvas{display:block;border-radius:12px;border:1.5px solid #e8e8e8;touch-action:none;cursor:grab;}
+.fml{font-size:13px;padding:10px 16px;border-radius:20px;background:#f5f5f5;border:1.5px solid #d0d0d0;color:#2c2c2a;margin:6px 0;font-family:ui-monospace,monospace;line-height:1.8;}
+.row{display:flex;align-items:center;gap:10px;margin:6px 0;flex-wrap:wrap;}
+.pill{font-size:13px;font-weight:500;color:#2c2c2a;background:#f5f5f5;border:1.5px solid #d0d0d0;border-radius:20px;padding:6px 14px;white-space:nowrap;}
+.val{min-width:86px;text-align:center;font-size:13px;font-weight:500;color:#2c2c2a;background:#f5f5f5;border:1.5px solid #d0d0d0;border-radius:20px;padding:5px 10px;}
+.btn{padding:8px 18px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid #d0d0d0;background:#fff;color:#2c2c2a;}
+.info{font-size:12px;padding:8px 14px;border-radius:20px;background:#f5f5f5;border:1.5px solid #d0d0d0;color:#555;margin:6px 0;font-family:ui-monospace,monospace;line-height:1.8;}
+input[type=range]{flex:1;min-width:110px;}
+</style>
+
+<canvas id="cv" style="width:100%;height:60vh;min-height:360px;"></canvas>
+
+<div class="fml">
+  <b style="color:#185fa5">F̄ₐ = ρ_fluide · V_immergé · g</b> (poussée = poids du fluide déplacé) &nbsp;|&nbsp; flotte si <b style="color:#1D9E75">ρ_objet < ρ_fluide</b> &nbsp;|&nbsp; fraction immergée = ρ_objet/ρ_fluide &nbsp;·&nbsp; <i>glisse l'objet !</i>
+</div>
+
+<div class="row">
+  <span class="pill" style="min-width:135px;border-color:#f09595;color:#E24B4A;">ρ_objet</span>
+  <input type="range" id="ro" min="200" max="1600" value="600" step="50" style="accent-color:#E24B4A;">
+  <span class="val" id="rov" style="border-color:#f09595;color:#E24B4A;">600 kg/m³</span>
+</div>
+<div class="row">
+  <span class="pill" style="min-width:135px;border-color:#b5d4f4;color:#185fa5;">ρ_fluide</span>
+  <input type="range" id="rf" min="700" max="1300" value="1000" step="25" style="accent-color:#378ADD;">
+  <span class="val" id="rfv" style="border-color:#b5d4f4;color:#185fa5;">1000 kg/m³</span>
+</div>
+<div class="row">
+  <span class="pill" style="min-width:135px;border-color:#9FE1CB;color:#1D9E75;">taille de l'objet</span>
+  <input type="range" id="sz" min="0.6" max="1.4" value="1" step="0.1" style="accent-color:#1D9E75;">
+  <span class="val" id="szv" style="border-color:#9FE1CB;color:#1D9E75;">1.0×</span>
+</div>
+<div class="row">
+  <button class="btn" onclick="preset(600)">Bois (flotte)</button>
+  <button class="btn" onclick="preset(1000)">Densité = eau</button>
+  <button class="btn" onclick="preset(1400)">Métal (coule)</button>
+</div>
+
+<div class="info" id="info"></div>
+
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const RED='#E24B4A',BLUE='#378ADD',BLUE_D='#185fa5',FLUID='#dcecfa',FLUID2='#a8cff0',GREEN='#1D9E75',GREY='#9aa0a6',AX='#c8ccd0';
+let W=0,H=0,dpr=1;
+let ro=600,rf=1000,sz=1;
+const g=9.81;
+let y=0,vy=0,drag=false;     // y = position du haut de l'objet (px), dynamique
+let init=false;
+
+function bind(id,fmt,f){const s=document.getElementById(id),o=document.getElementById(id+'v');
+  s.addEventListener('input',()=>{const v=parseFloat(s.value);f(v);o.textContent=fmt(v);});}
+bind('ro',v=>v+' kg/m³',v=>ro=v);
+bind('rf',v=>v+' kg/m³',v=>rf=v);
+bind('sz',v=>v.toFixed(1)+'×',v=>sz=v);
+function preset(v){ro=v;document.getElementById('ro').value=v;document.getElementById('rov').textContent=v+' kg/m³';}
+
+function syncSize(){const r=cv.getBoundingClientRect();dpr=window.devicePixelRatio||1;
+  const nW=Math.round(r.width)||700,nH=Math.round(r.height)||370;
+  if(nW!==W||nH!==H){W=nW;H=nH;cv.width=W*dpr;cv.height=H*dpr;}
+  ctx.setTransform(dpr,0,0,dpr,0,0);}
+
+function arrow(x,yy,vx,vv,col,lab,w){
+  const len=Math.hypot(vx,vv);if(len<3)return;
+  const ex=x+vx,ey=yy+vv;
+  ctx.strokeStyle=col;ctx.lineWidth=w||2.5;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(x,yy);ctx.lineTo(ex,ey);ctx.stroke();
+  const hs=(w||2.5)*3.2,ang=Math.atan2(vv,vx);
+  ctx.fillStyle=col;ctx.save();ctx.translate(ex,ey);ctx.rotate(ang);
+  ctx.beginPath();ctx.moveTo(hs,0);ctx.lineTo(-hs*0.7,-hs*0.55);ctx.lineTo(-hs*0.7,hs*0.55);ctx.closePath();ctx.fill();ctx.restore();
+  if(lab){ctx.font='600 13px system-ui';ctx.textAlign='center';ctx.fillStyle=col;
+    ctx.fillText(lab,ex+vx/len*16,ey+vv/len*16+4);}
+}
+
+function draw(){
+  syncSize();
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
+
+  // cuve
+  const tankX=W*0.16, tankW=W*0.68, tankTop=H*0.16, tankBot=H*0.90;
+  const surf0=H*0.36;                       // surface au repos
+  const objW=90*sz, objH=90*sz;
+  if(!init){y=surf0-objH*0.5;init=true;}
+
+  // dynamique
+  const Vtot=objW*objH;                     // "volume" 2D (px²) — proxy
+  const surf=surf0;                         // (montée d'eau négligée pour la lisibilité)
+  // immersion
+  let subTop=Math.max(y,surf);
+  let subBot=Math.min(y+objH,tankBot);
+  let hsub=Math.max(0,subBot-subTop);
+  const fracSub=Math.min(1,hsub/objH);
+  // forces (unités arbitraires cohérentes)
+  const Fg=ro*objH;                          // ∝ ρ_obj·V
+  const Fa=rf*hsub;                          // ∝ ρ_f·V_imm
+  if(!drag){
+    const net=(Fg-Fa)*0.00004;               // vers le bas +
+    vy+=net;vy*=0.90;                        // amortissement (traînée)
+    y+=vy;
+  }
+  // butées
+  if(y< tankTop-objH*0.6)y=tankTop-objH*0.6;
+  if(y+objH>tankBot){y=tankBot-objH;vy=0;}
+
+  // recalcul immersion après maj
+  subTop=Math.max(y,surf);subBot=Math.min(y+objH,tankBot);hsub=Math.max(0,subBot-subTop);
+  const frac=Math.min(1,hsub/objH);
+
+  // parois cuve
+  ctx.strokeStyle='#c2c6ca';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(tankX,tankTop);ctx.lineTo(tankX,tankBot);ctx.lineTo(tankX+tankW,tankBot);ctx.lineTo(tankX+tankW,tankTop);ctx.stroke();
+  // eau
+  ctx.fillStyle=FLUID;ctx.fillRect(tankX,surf,tankW,tankBot-surf);
+  ctx.strokeStyle=FLUID2;ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(tankX,surf);ctx.lineTo(tankX+tankW,surf);ctx.stroke();
+  ctx.fillStyle='#7aa8d4';ctx.font='11px ui-monospace,monospace';ctx.textAlign='left';
+  ctx.fillText('ρ_fluide = '+rf,tankX+8,surf+18);
+
+  // objet
+  const ox=W*0.5-objW/2;
+  ctx.save();
+  ctx.beginPath();ctx.rect(ox-4,y-4,objW+8,objH+8);ctx.clip?0:0;ctx.restore();
+  ctx.fillStyle='#fbe6e6';ctx.strokeStyle=RED;ctx.lineWidth=2.5;
+  ctx.beginPath();ctx.roundRect(ox,y,objW,objH,7);ctx.fill();ctx.stroke();
+  // partie immergée teintée
+  if(hsub>0){
+    ctx.save();ctx.beginPath();ctx.rect(ox,subTop,objW,hsub);ctx.clip();
+    ctx.fillStyle='rgba(56,138,221,0.16)';ctx.fillRect(ox,y,objW,objH);ctx.restore();
+  }
+  ctx.fillStyle='#a32d2d';ctx.font='600 12px system-ui';ctx.textAlign='center';
+  ctx.fillText('ρ='+ro,ox+objW/2,y+objH/2+4);
+
+  // forces depuis le centre
+  const cxO=ox+objW/2, cyO=y+objH/2;
+  arrow(cxO-14,cyO,0,Math.min(Fg*0.00045,120),RED,'P̄ = mḡ',3);
+  if(Fa>0)arrow(cxO+14,cyO,0,-Math.min(Fa*0.00045,120),BLUE,'F̄ₐ',3);
+
+  // verdict
+  ctx.font='600 15px system-ui';ctx.textAlign='center';
+  let verdict,vcol;
+  if(ro<rf-10){verdict='FLOTTE  (ρ_objet < ρ_fluide)';vcol=GREEN;}
+  else if(ro>rf+10){verdict='COULE  (ρ_objet > ρ_fluide)';vcol=RED;}
+  else{verdict='ÉQUILIBRE indifférent (ρ_objet = ρ_fluide)';vcol=BLUE_D;}
+  ctx.fillStyle=vcol;ctx.fillText(verdict,W/2,tankTop-16>20?tankTop-14:H*0.10);
+
+  const fracTh=Math.min(1,ro/rf);
+  document.getElementById('info').innerHTML=
+    '<b style="color:'+RED+'">P = ρ_o·V·g</b> &nbsp;vs&nbsp; <b style="color:'+BLUE_D+'">Fₐ = ρ_f·V_imm·g</b> &nbsp;|&nbsp; '+
+    'fraction immergée mesurée ≈ '+(frac*100).toFixed(0)+'%'+
+    (ro<rf?' &nbsp;(théorie ρ_o/ρ_f = '+(fracTh*100).toFixed(0)+'%)':'');
+
+  requestAnimationFrame(draw);
+}
+
+function getY(e){const r=cv.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return t.clientY-r.top;}
+cv.addEventListener('mousedown',e=>{drag=true;vy=0;cv.style.cursor='grabbing';});
+cv.addEventListener('mousemove',e=>{if(drag){y=getY(e)-45*sz;}});
+window.addEventListener('mouseup',()=>{drag=false;cv.style.cursor='grab';});
+cv.addEventListener('touchstart',e=>{drag=true;vy=0;},{passive:false});
+cv.addEventListener('touchmove',e=>{if(drag){e.preventDefault();y=getY(e)-45*sz;}},{passive:false});
+window.addEventListener('touchend',()=>{drag=false;});
+draw();
+</script>
