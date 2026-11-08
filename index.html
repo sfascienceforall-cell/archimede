@@ -161,7 +161,7 @@ new MutationObserver(ms=>ms.forEach(m=>{if(m.target.classList&&m.target.classLis
 <canvas id="cv" style="width:100%;height:60vh;min-height:360px;"></canvas>
 
 <div class="fml">
-  <b style="color:#185fa5">F̄ₐ = ρ_fluide · V_immergé · g</b> (poussée = poids du fluide déplacé) &nbsp;|&nbsp; flotte si <b style="color:#1D9E75">ρ_objet < ρ_fluide</b> &nbsp;|&nbsp; fraction immergée = ρ_objet/ρ_fluide &nbsp;·&nbsp; <i>glisse l'objet !</i>
+  <b style="color:#185fa5">F̄ₐ = ρ_fluide · V_immergé · g</b> (poussée = poids du fluide déplacé) &nbsp;|&nbsp; flotte si <b style="color:#1D9E75">ρ_objet < ρ_fluide</b> &nbsp;|&nbsp; fraction immergée = ρ_objet/ρ_fluide &nbsp;·&nbsp; <i>glisse l'objet et regarde l'eau déplacée !</i>
 </div>
 
 <div class="row">
@@ -184,6 +184,12 @@ new MutationObserver(ms=>ms.forEach(m=>{if(m.target.classList&&m.target.classLis
   <button class="btn" onclick="preset(1000)">Densité = eau</button>
   <button class="btn" onclick="preset(1400)">Métal (coule)</button>
 </div>
+<div class="row">
+  <span class="pill" style="min-width:135px;">eau déplacée</span>
+  <button class="btn on" id="mNiv" onclick="setMode('niveau')">Le niveau monte</button>
+  <button class="btn" id="mDeb" onclick="setMode('debord')">Vase à trop-plein</button>
+  <button class="btn" id="mVid" onclick="vider()">Vider le bécher</button>
+</div>
 
 <div class="info" id="info"></div>
 
@@ -198,6 +204,12 @@ let ro=600,rf=1000,sz=1;
 const g=9.81;
 let y=0,vy=0,drag=false;     // y = position du haut de l'objet (px), dynamique
 let init=false;
+let mode='niveau', Aw=null, coll=0, pourT=0, lastGeo='';   // Aw : aire d'eau dans la cuve (px²) ; coll : eau recueillie (px²)
+const K=1/9;                                                 // échelle : 9 px = 1 cm (objet de 10 cm à la taille 1×)
+let lift=false;
+function setMode(m){mode=m;Aw=null;coll=0;if(m==='debord')lift=true;document.getElementById('mNiv').classList.toggle('on',m==='niveau');document.getElementById('mDeb').classList.toggle('on',m==='debord');document.getElementById('mVid').style.display=m==='debord'?'':'none';}
+function vider(){coll=0;Aw=null;lift=true;}
+document.getElementById('mVid').style.display='none';
 
 function bind(id,fmt,f){const s=document.getElementById(id),o=document.getElementById(id+'v');
   s.addEventListener('input',()=>{const v=parseFloat(s.value);f(v);o.textContent=fmt(v);});}
@@ -227,14 +239,24 @@ function draw(){
   ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);
 
   // cuve
-  const tankX=W*0.16, tankW=W*0.68, tankTop=H*0.16, tankBot=H*0.90;
+  const deb=mode==='debord';
+  const tankX=deb?W*0.06:W*0.16, tankW=deb?W*0.60:W*0.68, tankTop=H*0.16, tankBot=H*0.90;
   const surf0=H*0.36;                       // surface au repos
   const objW=90*sz, objH=90*sz;
   if(!init){y=surf0-objH*0.5;init=true;}
 
   // dynamique
   const Vtot=objW*objH;                     // "volume" 2D (px²) — proxy
-  const surf=surf0;                         // (montée d'eau négligée pour la lisibilité)
+  // niveau d'eau : l'objet immergé chasse l'eau (aire 2D conservée ; profondeur de la cuve = celle de l'objet)
+  if(lift){lift=false;y=surf0-objH-12;vy=0;Aw=null;}
+  const geoKey=W+'x'+H+mode+sz;
+  if(Aw===null||geoKey!==lastGeo){lastGeo=geoKey;Aw=tankW*(tankBot-surf0);
+    if(deb){ // cuve remplie jusqu'au bec avec l'objet dans sa position actuelle
+      const hs0=Math.max(0,Math.min(y+objH,tankBot)-Math.max(y,surf0));Aw-=objW*hs0;}}
+  function levelFor(Awater){let sf=surf0;for(let it=0;it<4;it++){const hs=Math.max(0,Math.min(y+objH,tankBot)-Math.max(y,sf));sf=tankBot-(Awater+objW*hs)/tankW;}return sf;}
+  let surf=levelFor(Aw);
+  if(deb&&surf<surf0-0.01){const ex=(surf0-surf)*tankW;Aw-=ex;coll+=ex;pourT=0.35;surf=levelFor(Aw);}
+  if(pourT>0)pourT-=1/60;
   // immersion
   let subTop=Math.max(y,surf);
   let subBot=Math.min(y+objH,tankBot);
@@ -270,6 +292,32 @@ function draw(){
   ctx.lineTo(tankX+tankW-rc,tankBot);ctx.quadraticCurveTo(tankX+tankW,tankBot,tankX+tankW,tankBot-rc);ctx.lineTo(tankX+tankW,surf);ctx.closePath();ctx.fillStyle=wg;ctx.fill();ctx.restore();
   ctx.strokeStyle='#378ADD';ctx.lineWidth=2;ctx.lineCap='round';
   ctx.beginPath();ctx.moveTo(tankX,surf);ctx.lineTo(tankX+tankW,surf);ctx.stroke();
+  const Vimm_cm3=objW*hsub*objW*K*K*K;     // volume immergé (cm³)
+  if(mode==='niveau' && surf0-surf>0.3){
+    // la tranche d'eau soulevée a exactement le volume de la partie immergée
+    ctx.fillStyle='rgba(234,88,12,.28)';ctx.fillRect(tankX+2,surf,tankW-4,surf0-surf);
+    ctx.setLineDash([6,4]);ctx.strokeStyle='#64748b';ctx.lineWidth=1.3;ctx.beginPath();ctx.moveTo(tankX-6,surf0);ctx.lineTo(tankX+tankW+6,surf0);ctx.stroke();ctx.setLineDash([]);
+    lbl('niveau sans objet',tankX+tankW-14,surf0+15,'#64748b',FONT(700,11),'right');
+    lbl('eau soulevée = '+Vimm_cm3.toFixed(0)+' cm³',tankX+tankW-14,surf-7,'#c2410c',FONT(800,12),'right');
+  }
+  if(deb){
+    // bec verseur au niveau de départ, bécher gradué à droite
+    const spX=tankX+tankW, bkX=W*0.75, bkW=Math.min(W*0.16,objW*0.55), bkBot=tankBot, bkTop=tankBot-(tankBot-surf0)*0.95;
+    ctx.fillStyle='#cbd5e1';ctx.fillRect(spX,surf0-6,bkX+bkW*0.3-spX,6);
+    ctx.strokeStyle='#8a95a3';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(spX,surf0-6);ctx.lineTo(bkX+bkW*0.3,surf0-6);ctx.moveTo(spX,surf0);ctx.lineTo(bkX+bkW*0.3,surf0);ctx.stroke();
+    const hc=coll/bkW;   // hauteur d'eau dans le bécher (même profondeur → même conversion en cm³)
+    if(pourT>0){ctx.fillStyle='rgba(55,138,221,.75)';ctx.fillRect(bkX+bkW*0.3-4,surf0,4,bkBot-hc-surf0);}
+    const bg2=ctx.createLinearGradient(0,bkBot-hc,0,bkBot);bg2.addColorStop(0,'rgba(234,88,12,.35)');bg2.addColorStop(1,'rgba(55,138,221,.55)');
+    ctx.fillStyle=bg2;ctx.fillRect(bkX,bkBot-hc,bkW,hc);
+    ctx.strokeStyle='#8a95a3';ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(bkX,bkTop);ctx.lineTo(bkX,bkBot);ctx.lineTo(bkX+bkW,bkBot);ctx.lineTo(bkX+bkW,bkTop);ctx.stroke();
+    // graduations (cm³)
+    const pxPer100=100/(bkW*objW*K*K*K);   // hauteur (px) pour 100 cm³
+    ctx.strokeStyle='rgba(19,35,58,.35)';ctx.lineWidth=1;
+    const lstep=pxPer100>=14?200:500;for(let v=100;v<5000;v+=100){const gy=bkBot-v/100*pxPer100;if(gy<bkTop)break;ctx.beginPath();ctx.moveTo(bkX+bkW-(v%lstep===0?14:8),gy);ctx.lineTo(bkX+bkW,gy);ctx.stroke();if(v%lstep===0){if(bkX-(tankX+tankW)>34)lbl(v+'',bkX-6,gy+4,'#64748b',FONT(700,10),'right');else lbl(v+'',bkX+3,gy+4,'#64748b',FONT(700,9.5),'left');}}
+    const Vc=coll*objW*K*K*K;
+    lbl('recueilli',bkX+bkW/2,bkTop-24,'#c2410c',FONT(700,11.5));
+    lbl(Vc.toFixed(0)+' cm³',bkX+bkW/2,bkTop-8,'#c2410c',FONT(800,13));
+  }
   // parois
   ctx.strokeStyle='#8a95a3';ctx.lineWidth=3;ctx.lineJoin='round';ctx.lineCap='round';
   ctx.beginPath();ctx.moveTo(tankX,tankTop);ctx.lineTo(tankX,tankBot-rc);ctx.quadraticCurveTo(tankX,tankBot,tankX+rc,tankBot);
@@ -279,13 +327,13 @@ function draw(){
   // graduations sur la paroi droite
   ctx.strokeStyle='rgba(19,35,58,.25)';ctx.lineWidth=1;
   for(let gy=tankBot-20;gy>tankTop+10;gy-=(tankBot-tankTop)/12){ctx.beginPath();ctx.moveTo(tankX+tankW-10,gy);ctx.lineTo(tankX+tankW-2,gy);ctx.stroke();}
-  { const oxL=W*0.5-objW/2-8, t1='ρ_fluide = '+rf+' kg/m³';   // ne pas passer sous l'objet (téléphone)
+  { const oxL=tankX+tankW/2-objW/2-8, t1='ρ_fluide = '+rf+' kg/m³';   // ne pas passer sous l'objet (téléphone)
     ctx.font=FONT(800,12);
     if(tankX+16+ctx.measureText(t1).width<oxL)lbl(t1,tankX+16,surf+20,BLUE_D,FONT(800,12),'left');
     else{lbl('ρ_fluide',tankX+14,surf+19,BLUE_D,FONT(800,12),'left');lbl('= '+rf,tankX+14,surf+34,BLUE_D,FONT(800,12),'left');} }
 
   // objet
-  const ox=W*0.5-objW/2;
+  const ox=tankX+tankW/2-objW/2;
   ctx.save();
   ctx.beginPath();ctx.rect(ox-4,y-4,objW+8,objH+8);ctx.clip?0:0;ctx.restore();
   // bloc : teinte selon la densité (léger = clair, dense = foncé), dégradé + ombre douce
@@ -327,6 +375,9 @@ function draw(){
     '<b style="color:'+RED+'">P = ρ_o·V·g</b> &nbsp;vs&nbsp; <b style="color:'+BLUE_D+'">Fₐ = ρ_f·V_imm·g</b> &nbsp;|&nbsp; '+
     'fraction immergée mesurée ≈ '+(frac*100).toFixed(0)+'%'+
     (ro<rf?' &nbsp;(théorie ρ_o/ρ_f = '+(fracTh*100).toFixed(0)+'%)':'');
+  { const Vi=objW*hsub*objW*K*K*K, Fa_N=rf*Vi*1e-6*g, Vc=coll*objW*K*K*K;
+    document.getElementById('info').innerHTML+='<br><b style="color:#c2410c">Eau déplacée</b> : volume immergé = '+Vi.toFixed(0)+' cm³ → poussée Fₐ = ρ_f·V·g = '+Fa_N.toFixed(2)+' N, c\'est le <b>poids de l\'eau déplacée</b> ('+(rf*Vi*1e-3).toFixed(0)+' g de fluide).'+
+      (mode==='debord'?' Recueilli dans le bécher : <b>'+Vc.toFixed(0)+' cm³</b>'+(Vc>1?' = '+(rf*Vc*1e-6*g).toFixed(2)+' N de poids.':'. Enfonce l\'objet : l\'eau qui déborde a le volume de la partie immergée.'):' La tranche orange qui monte a le même volume que la partie immergée de l\'objet.'); }
 
   requestAnimationFrame(draw);
 }
